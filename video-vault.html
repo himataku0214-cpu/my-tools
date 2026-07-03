@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<title>電卓</title>
+<style>
+  :root{
+    --bg:#000;
+    --key-num:#333333;
+    --key-num-active:#5c5c5c;
+    --key-fn:#a5a5a5;
+    --key-fn-active:#d9d9d9;
+    --key-op:#ff9f0a;
+    --key-op-active:#ffc266;
+    --text:#fff;
+  }
+  *{box-sizing:border-box; -webkit-user-select:none; user-select:none; -webkit-touch-callout:none;}
+  html,body{height:100%; margin:0; background:#000; overscroll-behavior:none;}
+  body{font-family:-apple-system,BlinkMacSystemFont,"Helvetica Neue",sans-serif; color:var(--text);}
+
+  /* ---------- CALCULATOR ---------- */
+  #calc{
+    position:fixed; inset:0; display:flex; flex-direction:column; justify-content:flex-end;
+    padding:0 8px 8px; background:var(--bg);
+  }
+  #display{
+    text-align:right; font-size:min(15vw,80px); font-weight:200; padding:0 12px 12px;
+    overflow:hidden; white-space:nowrap; direction:rtl;
+  }
+  #keys{display:grid; grid-template-columns:repeat(4,1fr); gap:10px; padding-bottom:env(safe-area-inset-bottom);}
+  .key{
+    aspect-ratio:1/1; border-radius:50%; border:none; font-size:min(9vw,36px);
+    display:flex; align-items:center; justify-content:center;
+    background:var(--key-num); color:var(--text);
+  }
+  .key.fn{background:var(--key-fn); color:#000;}
+  .key.op{background:var(--key-op); color:#fff; font-size:min(11vw,44px);}
+  .key.zero{grid-column:span 2; aspect-ratio:auto; border-radius:40px; justify-content:flex-start; padding-left:calc(50% - 10px);}
+  .key:active{filter:brightness(1.3);}
+
+  /* ---------- SETTINGS (long-press AC) ---------- */
+  #settings{
+    position:fixed; inset:0; background:rgba(20,20,20,.98); display:none;
+    align-items:center; justify-content:center; flex-direction:column; gap:16px; padding:24px; z-index:50;
+  }
+  #settings.show{display:flex;}
+  #settings h2{font-size:18px; font-weight:600;}
+  #settings input{
+    width:220px; padding:12px; font-size:18px; border-radius:10px; border:none;
+    background:#333; color:#fff; text-align:center;
+  }
+  #settings label{font-size:13px; color:#aaa; margin-bottom:-8px;}
+  #settings button{
+    padding:12px 24px; border-radius:10px; border:none; background:var(--key-op); color:#fff; font-size:16px; margin-top:8px;
+  }
+  #settings .close{background:#555;}
+
+  /* ---------- VAULT ---------- */
+  #vault{
+    position:fixed; inset:0; background:#0d0d0f; display:none; flex-direction:column; z-index:40;
+  }
+  #vault.show{display:flex;}
+  #vaultHeader{
+    display:flex; align-items:center; justify-content:space-between; padding:14px 16px;
+    padding-top:calc(14px + env(safe-area-inset-top)); border-bottom:1px solid #222;
+  }
+  #vaultHeader button{background:none; border:none; color:#4da3ff; font-size:16px; padding:6px 8px;}
+  #vaultTitle{font-size:17px; font-weight:600;}
+  #grid{
+    flex:1; overflow-y:auto; display:grid; grid-template-columns:repeat(3,1fr); gap:2px; padding:2px;
+  }
+  .thumb{position:relative; aspect-ratio:1/1; background:#1a1a1c; overflow:hidden;}
+  .thumb video{width:100%; height:100%; object-fit:cover; pointer-events:none;}
+  .thumb .del{
+    position:absolute; top:4px; right:4px; width:26px; height:26px; border-radius:50%;
+    background:rgba(0,0,0,.6); color:#fff; display:none; align-items:center; justify-content:center; font-size:15px;
+  }
+  .thumb.editing .del{display:flex;}
+  #empty{flex:1; display:flex; align-items:center; justify-content:center; color:#666; font-size:15px; text-align:center; padding:20px;}
+
+  #player{
+    position:fixed; inset:0; background:#000; display:none; align-items:center; justify-content:center; z-index:60;
+  }
+  #player.show{display:flex;}
+  #player video{width:100%; max-height:100%;}
+  #player .closeP{
+    position:absolute; top:calc(16px + env(safe-area-inset-top)); right:16px; width:34px; height:34px;
+    border-radius:50%; background:rgba(255,255,255,.15); color:#fff; border:none; font-size:18px;
+  }
+
+  #fileInput{display:none;}
+</style>
+</head>
+<body>
+
+<!-- CALCULATOR -->
+<div id="calc">
+  <div id="display">0</div>
+  <div id="keys">
+    <button class="key fn" id="ac">AC</button>
+    <button class="key fn">+/-</button>
+    <button class="key fn">%</button>
+    <button class="key op" data-op="÷">÷</button>
+
+    <button class="key" data-n="7">7</button>
+    <button class="key" data-n="8">8</button>
+    <button class="key" data-n="9">9</button>
+    <button class="key op" data-op="×">×</button>
+
+    <button class="key" data-n="4">4</button>
+    <button class="key" data-n="5">5</button>
+    <button class="key" data-n="6">6</button>
+    <button class="key op" data-op="−">−</button>
+
+    <button class="key" data-n="1">1</button>
+    <button class="key" data-n="2">2</button>
+    <button class="key" data-n="3">3</button>
+    <button class="key op" data-op="+">+</button>
+
+    <button class="key zero" data-n="0">0</button>
+    <button class="key" data-n=".">.</button>
+    <button class="key op" id="eq">=</button>
+  </div>
+</div>
+
+<!-- SETTINGS -->
+<div id="settings">
+  <h2>金庫の初期設定</h2>
+  <label>本物の合言葉(数字)</label>
+  <input id="realCodeInput" inputmode="numeric" placeholder="例: 19283">
+  <label>ダミーの合言葉(数字・任意)</label>
+  <input id="decoyCodeInput" inputmode="numeric" placeholder="例: 84756">
+  <button id="saveSettings">保存</button>
+  <button class="close" id="closeSettings">閉じる</button>
+</div>
+
+<!-- VAULT -->
+<div id="vault">
+  <div id="vaultHeader">
+    <button id="lockBtn">🔒 ロック</button>
+    <div id="vaultTitle"></div>
+    <div>
+      <button id="editBtn">編集</button>
+      <button id="addBtn">＋</button>
+    </div>
+  </div>
+  <div id="grid"></div>
+  <div id="empty" style="display:none;"></div>
+</div>
+
+<!-- PLAYER -->
+<div id="player">
+  <button class="closeP" id="closePlayer">✕</button>
+  <video id="playerVideo" controls playsinline></video>
+</div>
+
+<input type="file" id="fileInput" accept="video/*" multiple>
+
+<script>
+/* ---------------- IndexedDB ---------------- */
+let db;
+const dbReq = indexedDB.open('videoVaultDB', 1);
+dbReq.onupgradeneeded = e => {
+  const d = e.target.result;
+  if(!d.objectStoreNames.contains('videos')) d.createObjectStore('videos',{keyPath:'id',autoIncrement:true});
+  if(!d.objectStoreNames.contains('kv')) d.createObjectStore('kv',{keyPath:'key'});
+};
+dbReq.onsuccess = e => { db = e.target.result; init(); };
+dbReq.onerror = () => alert('ストレージを開けませんでした');
+
+function kvGet(key){
+  return new Promise(res=>{
+    const tx = db.transaction('kv','readonly').objectStore('kv').get(key);
+    tx.onsuccess = () => res(tx.result ? tx.result.value : null);
+    tx.onerror = () => res(null);
+  });
+}
+function kvSet(key,value){
+  return new Promise(res=>{
+    const tx = db.transaction('kv','readwrite').objectStore('kv').put({key,value});
+    tx.onsuccess = () => res(true);
+  });
+}
+function addVideo(blob,name,vaultType){
+  return new Promise(res=>{
+    const tx = db.transaction('videos','readwrite').objectStore('videos').add({blob,name,vaultType,date:Date.now()});
+    tx.onsuccess = () => res(true);
+  });
+}
+function getVideos(vaultType){
+  return new Promise(res=>{
+    const items=[];
+    const cursorReq = db.transaction('videos','readonly').objectStore('videos').openCursor();
+    cursorReq.onsuccess = e => {
+      const cur = e.target.result;
+      if(cur){
+        if(cur.value.vaultType===vaultType) items.push({id:cur.key,...cur.value});
+        cur.continue();
+      } else {
+        items.sort((a,b)=>b.date-a.date);
+        res(items);
+      }
+    };
+  });
+}
+function deleteVideo(id){
+  return new Promise(res=>{
+    const tx = db.transaction('videos','readwrite').objectStore('videos').delete(id);
+    tx.onsuccess = () => res(true);
+  });
+}
+
+/* ---------------- Calculator logic ---------------- */
+const display = document.getElementById('display');
+let buffer = '0';      // shown value
+let rawEntry = '';     // pure digits typed since last operator/clear -> used for code check
+let pending = null;    // {a, op}
+let justEvaluated = false;
+
+function render(){ display.textContent = buffer; }
+
+document.querySelectorAll('.key[data-n]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const n = btn.dataset.n;
+    if(justEvaluated){ buffer='0'; rawEntry=''; justEvaluated=false; }
+    if(n==='.'){
+      if(!buffer.includes('.')) buffer += '.';
+    } else {
+      buffer = (buffer==='0') ? n : buffer+n;
+      rawEntry += n;
+    }
+    render();
+  });
+});
+
+document.querySelectorAll('.key[data-op]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    pending = {a: parseFloat(buffer), op: btn.dataset.op};
+    buffer = '0';
+    rawEntry = '';
+    justEvaluated = false;
+  });
+});
+
+document.getElementById('eq').addEventListener('click', async ()=>{
+  // secret code check happens on plain number entry (no pending operator)
+  if(!pending && rawEntry.length>0){
+    const real = await kvGet('realCode');
+    const decoy = await kvGet('decoyCode');
+    if(real && rawEntry===real){ openVault('real'); resetCalc(); return; }
+    if(decoy && rawEntry===decoy){ openVault('decoy'); resetCalc(); return; }
+  }
+  if(pending){
+    const b = parseFloat(buffer);
+    let result = b;
+    switch(pending.op){
+      case '+': result = pending.a + b; break;
+      case '−': result = pending.a - b; break;
+      case '×': result = pending.a * b; break;
+      case '÷': result = b===0 ? 0 : pending.a / b; break;
+    }
+    buffer = String(Math.round(result*1e10)/1e10);
+    pending = null;
+  }
+  rawEntry='';
+  justEvaluated = true;
+  render();
+});
+
+document.getElementById('ac').addEventListener('click', resetCalc);
+function resetCalc(){ buffer='0'; rawEntry=''; pending=null; justEvaluated=false; render(); }
+
+// long-press AC (2s) -> settings, only used to set/change the codes
+let acTimer=null;
+document.getElementById('ac').addEventListener('touchstart', ()=>{
+  acTimer = setTimeout(openSettings, 1500);
+});
+document.getElementById('ac').addEventListener('touchend', ()=> clearTimeout(acTimer));
+document.getElementById('ac').addEventListener('mousedown', ()=>{
+  acTimer = setTimeout(openSettings, 1500);
+});
+document.getElementById('ac').addEventListener('mouseup', ()=> clearTimeout(acTimer));
+
+async function openSettings(){
+  document.getElementById('realCodeInput').value = (await kvGet('realCode')) || '';
+  document.getElementById('decoyCodeInput').value = (await kvGet('decoyCode')) || '';
+  document.getElementById('settings').classList.add('show');
+}
+document.getElementById('closeSettings').addEventListener('click', ()=>{
+  document.getElementById('settings').classList.remove('show');
+});
+document.getElementById('saveSettings').addEventListener('click', async ()=>{
+  const r = document.getElementById('realCodeInput').value.trim();
+  const dCode = document.getElementById('decoyCodeInput').value.trim();
+  if(!/^\d+$/.test(r)){ alert('本物の合言葉は数字のみで入力してください'); return; }
+  if(dCode && !/^\d+$/.test(dCode)){ alert('ダミーの合言葉は数字のみで入力してください'); return; }
+  if(dCode && dCode===r){ alert('本物とダミーの合言葉は別の数字にしてください'); return; }
+  await kvSet('realCode', r);
+  if(dCode) await kvSet('decoyCode', dCode);
+  document.getElementById('settings').classList.remove('show');
+  alert('保存しました');
+});
+
+/* ---------------- Vault ---------------- */
+let currentVaultType = null;
+
+async function openVault(type){
+  currentVaultType = type;
+  document.getElementById('vaultTitle').textContent = '';
+  document.getElementById('vault').classList.add('show');
+  await renderGrid();
+}
+document.getElementById('lockBtn').addEventListener('click', ()=>{
+  document.getElementById('vault').classList.remove('show');
+  document.getElementById('grid').classList.remove('editing');
+  currentVaultType = null;
+});
+
+async function renderGrid(){
+  const grid = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  grid.innerHTML = '';
+  const videos = await getVideos(currentVaultType);
+  if(videos.length===0){
+    empty.style.display='flex';
+    empty.textContent = '動画がありません。右上の「＋」で追加できます。';
+  } else {
+    empty.style.display='none';
+  }
+  videos.forEach(v=>{
+    const url = URL.createObjectURL(v.blob);
+    const div = document.createElement('div');
+    div.className='thumb';
+    div.innerHTML = `<video src="${url}#t=0.5" muted preload="metadata"></video><button class="del">🗑</button>`;
+    div.querySelector('video').addEventListener('click', ()=>{
+      if(document.getElementById('grid').classList.contains('editing')) return;
+      const p = document.getElementById('player');
+      const pv = document.getElementById('playerVideo');
+      pv.src = url;
+      p.classList.add('show');
+      pv.play();
+    });
+    div.querySelector('.del').addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      await deleteVideo(v.id);
+      renderGrid();
+    });
+    grid.appendChild(div);
+  });
+}
+
+document.getElementById('editBtn').addEventListener('click', ()=>{
+  document.getElementById('grid').classList.toggle('editing');
+});
+
+document.getElementById('addBtn').addEventListener('click', ()=>{
+  document.getElementById('fileInput').click();
+});
+document.getElementById('fileInput').addEventListener('change', async (e)=>{
+  const files = Array.from(e.target.files);
+  for(const f of files){
+    await addVideo(f, f.name, currentVaultType);
+  }
+  e.target.value='';
+  renderGrid();
+});
+
+document.getElementById('closePlayer').addEventListener('click', ()=>{
+  const pv = document.getElementById('playerVideo');
+  pv.pause(); pv.src='';
+  document.getElementById('player').classList.remove('show');
+});
+
+/* ---------------- init ---------------- */
+async function init(){
+  const real = await kvGet('realCode');
+  if(!real){
+    // first launch: prompt setup
+    setTimeout(openSettings, 300);
+  }
+  render();
+}
+</script>
+</body>
+</html>
