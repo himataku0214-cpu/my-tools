@@ -166,6 +166,12 @@
 <input type="file" id="fileInput" accept="video/*" multiple>
 
 <script>
+window.onerror = function(msg, url, line, col, err){
+  alert('エラーが発生しました:\n' + msg + '\n(行:' + line + ')');
+  return false;
+};
+</script>
+<script>
 /* ---------------- IndexedDB ---------------- */
 let db;
 const dbReq = indexedDB.open('videoVaultDB', 1);
@@ -342,8 +348,14 @@ async function renderGrid(){
     empty.style.display='none';
   }
   videos.forEach(v=>{
-    const blob = v.buffer ? new Blob([v.buffer], {type: v.type || 'video/mp4'}) : v.blob;
-    const url = URL.createObjectURL(blob);
+    let url;
+    try{
+      const blob = v.buffer ? new Blob([v.buffer], {type: v.type || 'video/mp4'}) : v.blob;
+      if(!blob) throw new Error('no data');
+      url = URL.createObjectURL(blob);
+    }catch(err){
+      return; // skip this broken item, don't crash the whole render
+    }
     const div = document.createElement('div');
     div.className='thumb';
     div.innerHTML = `<video src="${url}#t=0.5" muted playsinline preload="metadata"></video><div class="fname">${v.name||''}</div><button class="del">🗑</button>`;
