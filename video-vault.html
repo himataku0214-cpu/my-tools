@@ -372,6 +372,9 @@ async function renderGrid(){
       await deleteVideo(v.id);
       renderGrid();
     });
+    if(document.getElementById('grid').classList.contains('editing')){
+      div.querySelector('.del').style.display = 'flex';
+    }
     grid.appendChild(div);
   });
 }
@@ -379,7 +382,11 @@ async function renderGrid(){
 document.getElementById('editBtn').addEventListener('click', ()=>{
   const grid = document.getElementById('grid');
   grid.classList.toggle('editing');
-  document.getElementById('editBtn').textContent = grid.classList.contains('editing') ? '完了' : '編集';
+  const isEditing = grid.classList.contains('editing');
+  document.getElementById('editBtn').textContent = isEditing ? '完了' : '編集';
+  document.querySelectorAll('.thumb .del').forEach(btn=>{
+    btn.style.display = isEditing ? 'flex' : 'none';
+  });
 });
 
 document.getElementById('addBtn').addEventListener('click', ()=>{
