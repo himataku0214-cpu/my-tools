@@ -176,59 +176,83 @@ window.addEventListener('unhandledrejection', function(e){
 </script>
 <script>
 /* ---------------- IndexedDB ---------------- */
-let db;
-const dbReq = indexedDB.open('videoVaultDB', 1);
-dbReq.onupgradeneeded = e => {
-  const d = e.target.result;
-  if(!d.objectStoreNames.contains('videos')) d.createObjectStore('videos',{keyPath:'id',autoIncrement:true});
-  if(!d.objectStoreNames.contains('kv')) d.createObjectStore('kv',{keyPath:'key'});
-};
-dbReq.onsuccess = e => { db = e.target.result; init(); };
-dbReq.onerror = () => alert('ストレージを開けませんでした');
+let dbPromise = null;
+function openDB(){
+  if(dbPromise) return dbPromise;
+  dbPromise = new Promise((resolve, reject)=>{
+    const req = indexedDB.open('videoVaultDB', 1);
+    req.onupgradeneeded = e => {
+      const d = e.target.result;
+      if(!d.objectStoreNames.contains('videos')) d.createObjectStore('videos',{keyPath:'id',autoIncrement:true});
+      if(!d.objectStoreNames.contains('kv')) d.createObjectStore('kv',{keyPath:'key'});
+    };
+    req.onsuccess = e => {
+      const d = e.target.result;
+      d.onclose = () => { dbPromise = null; };
+      d.onversionchange = () => { d.close(); dbPromise = null; };
+      resolve(d);
+    };
+    req.onerror = () => { dbPromise = null; reject(req.error); };
+  });
+  return dbPromise;
+}
+// run a transaction, auto-retrying once if the connection was closed
+async function withStore(storeName, mode, fn){
+  let d = await openDB();
+  try{
+    return await fn(d.transaction(storeName, mode).objectStore(storeName));
+  }catch(err){
+    if(String(err && err.message).includes('closing') || String(err).includes('closing')){
+      dbPromise = null;
+      d = await openDB();
+      return await fn(d.transaction(storeName, mode).objectStore(storeName));
+    }
+    throw err;
+  }
+}
+openDB().then(()=>init()).catch(()=> alert('ストレージを開けませんでした'));
 
 function kvGet(key){
-  return new Promise(res=>{
-    const tx = db.transaction('kv','readonly').objectStore('kv').get(key);
-    tx.onsuccess = () => res(tx.result ? tx.result.value : null);
-    tx.onerror = () => res(null);
-  });
+  return withStore('kv','readonly', store => new Promise((res,rej)=>{
+    const req = store.get(key);
+    req.onsuccess = () => res(req.result ? req.result.value : null);
+    req.onerror = () => res(null);
+  }));
 }
 function kvSet(key,value){
-  return new Promise(res=>{
-    const tx = db.transaction('kv','readwrite').objectStore('kv').put({key,value});
-    tx.onsuccess = () => res(true);
-  });
+  return withStore('kv','readwrite', store => new Promise((res,rej)=>{
+    const req = store.put({key,value});
+    req.onsuccess = () => res(true);
+    req.onerror = (e) => rej(e.target.error);
+  }));
 }
 function addVideo(file,name,vaultType){
-  return new Promise((res,rej)=>{
-    file.arrayBuffer().then(buffer=>{
-      try{
-        const req = db.transaction('videos','readwrite').objectStore('videos').add({buffer, type:file.type||'video/mp4', name, vaultType, date:Date.now()});
-        req.onsuccess = () => res(true);
-        req.onerror = (e) => rej(e.target.error);
-      }catch(err){ rej(err); }
-    }).catch(rej);
+  return file.arrayBuffer().then(buffer=>{
+    return withStore('videos','readwrite', store => new Promise((res,rej)=>{
+      const req = store.add({buffer, type:file.type||'video/mp4', name, vaultType, date:Date.now()});
+      req.onsuccess = () => res(true);
+      req.onerror = (e) => rej(e.target.error);
+    }));
   });
 }
 function getVideos(vaultType){
-  return new Promise((res,rej)=>{
-    try{
-      const req = db.transaction('videos','readonly').objectStore('videos').getAll();
-      req.onsuccess = () => {
-        const items = req.result
-          .filter(v=>v.vaultType===vaultType)
-          .sort((a,b)=>b.date-a.date);
-        res(items);
-      };
-      req.onerror = (e)=>rej(e.target.error);
-    }catch(err){ rej(err); }
-  });
+  return withStore('videos','readonly', store => new Promise((res,rej)=>{
+    const req = store.getAll();
+    req.onsuccess = () => {
+      const items = req.result
+        .filter(v=>v.vaultType===vaultType)
+        .sort((a,b)=>b.date-a.date);
+      res(items);
+    };
+    req.onerror = (e)=>rej(e.target.error);
+  }));
 }
 function deleteVideo(id){
-  return new Promise(res=>{
-    const tx = db.transaction('videos','readwrite').objectStore('videos').delete(id);
-    tx.onsuccess = () => res(true);
-  });
+  return withStore('videos','readwrite', store => new Promise((res,rej)=>{
+    const req = store.delete(id);
+    req.onsuccess = () => res(true);
+    req.onerror = (e) => rej(e.target.error);
+  }));
 }
 
 /* ---------------- Calculator logic ---------------- */
