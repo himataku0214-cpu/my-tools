@@ -377,7 +377,9 @@ async function renderGrid(){
 }
 
 document.getElementById('editBtn').addEventListener('click', ()=>{
-  document.getElementById('grid').classList.toggle('editing');
+  const grid = document.getElementById('grid');
+  grid.classList.toggle('editing');
+  document.getElementById('editBtn').textContent = grid.classList.contains('editing') ? '完了' : '編集';
 });
 
 document.getElementById('addBtn').addEventListener('click', ()=>{
