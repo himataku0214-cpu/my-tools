@@ -74,11 +74,17 @@
   }
   .thumb{position:relative; aspect-ratio:1/1; background:#1a1a1c; overflow:hidden;}
   .thumb video{width:100%; height:100%; object-fit:cover; pointer-events:none;}
+  .thumb{cursor:pointer;}
   .thumb .del{
     position:absolute; top:4px; right:4px; width:26px; height:26px; border-radius:50%;
     background:rgba(0,0,0,.6); color:#fff; display:none; align-items:center; justify-content:center; font-size:15px;
   }
   .thumb.editing .del{display:flex;}
+  .thumb .fname{
+    position:absolute; bottom:0; left:0; right:0; padding:4px 6px; font-size:10px; color:#ccc;
+    background:linear-gradient(transparent, rgba(0,0,0,.7)); white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    pointer-events:none;
+  }
   #empty{flex:1; display:flex; align-items:center; justify-content:center; color:#666; font-size:15px; text-align:center; padding:20px;}
 
   #player{
@@ -131,4 +137,277 @@
   <h2>金庫の初期設定</h2>
   <label>本物の合言葉(数字)</label>
   <input id="realCodeInput" inputmode="numeric" placeholder="例: 19283">
-  
+  <label>ダミーの合言葉(数字・任意)</label>
+  <input id="decoyCodeInput" inputmode="numeric" placeholder="例: 84756">
+  <button id="saveSettings">保存</button>
+  <button class="close" id="closeSettings">閉じる</button>
+</div>
+
+<!-- VAULT -->
+<div id="vault">
+  <div id="vaultHeader">
+    <button id="lockBtn">🔒 ロック</button>
+    <div id="vaultTitle"></div>
+    <div>
+      <button id="editBtn">編集</button>
+      <button id="addBtn">＋</button>
+    </div>
+  </div>
+  <div id="grid"></div>
+  <div id="empty" style="display:none;"></div>
+</div>
+
+<!-- PLAYER -->
+<div id="player">
+  <button class="closeP" id="closePlayer">✕</button>
+  <video id="playerVideo" controls playsinline></video>
+</div>
+
+<input type="file" id="fileInput" accept="video/*" multiple>
+
+<script>
+/* ---------------- IndexedDB ---------------- */
+let db;
+const dbReq = indexedDB.open('videoVaultDB', 1);
+dbReq.onupgradeneeded = e => {
+  const d = e.target.result;
+  if(!d.objectStoreNames.contains('videos')) d.createObjectStore('videos',{keyPath:'id',autoIncrement:true});
+  if(!d.objectStoreNames.contains('kv')) d.createObjectStore('kv',{keyPath:'key'});
+};
+dbReq.onsuccess = e => { db = e.target.result; init(); };
+dbReq.onerror = () => alert('ストレージを開けませんでした');
+
+function kvGet(key){
+  return new Promise(res=>{
+    const tx = db.transaction('kv','readonly').objectStore('kv').get(key);
+    tx.onsuccess = () => res(tx.result ? tx.result.value : null);
+    tx.onerror = () => res(null);
+  });
+}
+function kvSet(key,value){
+  return new Promise(res=>{
+    const tx = db.transaction('kv','readwrite').objectStore('kv').put({key,value});
+    tx.onsuccess = () => res(true);
+  });
+}
+function addVideo(file,name,vaultType){
+  return new Promise((res,rej)=>{
+    file.arrayBuffer().then(buffer=>{
+      try{
+        const req = db.transaction('videos','readwrite').objectStore('videos').add({buffer, type:file.type||'video/mp4', name, vaultType, date:Date.now()});
+        req.onsuccess = () => res(true);
+        req.onerror = (e) => rej(e.target.error);
+      }catch(err){ rej(err); }
+    }).catch(rej);
+  });
+}
+function getVideos(vaultType){
+  return new Promise(res=>{
+    const items=[];
+    const cursorReq = db.transaction('videos','readonly').objectStore('videos').openCursor();
+    cursorReq.onsuccess = e => {
+      const cur = e.target.result;
+      if(cur){
+        if(cur.value.vaultType===vaultType) items.push({id:cur.key,...cur.value});
+        cur.continue();
+      } else {
+        items.sort((a,b)=>b.date-a.date);
+        res(items);
+      }
+    };
+  });
+}
+function deleteVideo(id){
+  return new Promise(res=>{
+    const tx = db.transaction('videos','readwrite').objectStore('videos').delete(id);
+    tx.onsuccess = () => res(true);
+  });
+}
+
+/* ---------------- Calculator logic ---------------- */
+const display = document.getElementById('display');
+let buffer = '0';      // shown value
+let rawEntry = '';     // pure digits typed since last operator/clear -> used for code check
+let pending = null;    // {a, op}
+let justEvaluated = false;
+
+function render(){ display.textContent = buffer; }
+
+document.querySelectorAll('.key[data-n]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    const n = btn.dataset.n;
+    if(justEvaluated){ buffer='0'; rawEntry=''; justEvaluated=false; }
+    if(n==='.'){
+      if(!buffer.includes('.')) buffer += '.';
+    } else {
+      buffer = (buffer==='0') ? n : buffer+n;
+      rawEntry += n;
+    }
+    render();
+  });
+});
+
+document.querySelectorAll('.key[data-op]').forEach(btn=>{
+  btn.addEventListener('click', ()=>{
+    pending = {a: parseFloat(buffer), op: btn.dataset.op};
+    buffer = '0';
+    rawEntry = '';
+    justEvaluated = false;
+  });
+});
+
+document.getElementById('eq').addEventListener('click', async ()=>{
+  // secret code check happens on plain number entry (no pending operator)
+  if(!pending && rawEntry.length>0){
+    const real = await kvGet('realCode');
+    const decoy = await kvGet('decoyCode');
+    if(real && rawEntry===real){ openVault('real'); resetCalc(); return; }
+    if(decoy && rawEntry===decoy){ openVault('decoy'); resetCalc(); return; }
+  }
+  if(pending){
+    const b = parseFloat(buffer);
+    let result = b;
+    switch(pending.op){
+      case '+': result = pending.a + b; break;
+      case '−': result = pending.a - b; break;
+      case '×': result = pending.a * b; break;
+      case '÷': result = b===0 ? 0 : pending.a / b; break;
+    }
+    buffer = String(Math.round(result*1e10)/1e10);
+    pending = null;
+  }
+  rawEntry='';
+  justEvaluated = true;
+  render();
+});
+
+document.getElementById('ac').addEventListener('click', resetCalc);
+function resetCalc(){ buffer='0'; rawEntry=''; pending=null; justEvaluated=false; render(); }
+
+// long-press AC (2s) -> settings, only used to set/change the codes
+let acTimer=null;
+document.getElementById('ac').addEventListener('touchstart', ()=>{
+  acTimer = setTimeout(openSettings, 1500);
+});
+document.getElementById('ac').addEventListener('touchend', ()=> clearTimeout(acTimer));
+document.getElementById('ac').addEventListener('mousedown', ()=>{
+  acTimer = setTimeout(openSettings, 1500);
+});
+document.getElementById('ac').addEventListener('mouseup', ()=> clearTimeout(acTimer));
+
+async function openSettings(){
+  document.getElementById('realCodeInput').value = (await kvGet('realCode')) || '';
+  document.getElementById('decoyCodeInput').value = (await kvGet('decoyCode')) || '';
+  document.getElementById('settings').classList.add('show');
+}
+document.getElementById('closeSettings').addEventListener('click', ()=>{
+  document.getElementById('settings').classList.remove('show');
+});
+document.getElementById('saveSettings').addEventListener('click', async ()=>{
+  const r = document.getElementById('realCodeInput').value.trim();
+  const dCode = document.getElementById('decoyCodeInput').value.trim();
+  if(!/^\d+$/.test(r)){ alert('本物の合言葉は数字のみで入力してください'); return; }
+  if(dCode && !/^\d+$/.test(dCode)){ alert('ダミーの合言葉は数字のみで入力してください'); return; }
+  if(dCode && dCode===r){ alert('本物とダミーの合言葉は別の数字にしてください'); return; }
+  await kvSet('realCode', r);
+  if(dCode) await kvSet('decoyCode', dCode);
+  document.getElementById('settings').classList.remove('show');
+  alert('保存しました');
+});
+
+/* ---------------- Vault ---------------- */
+let currentVaultType = null;
+
+async function openVault(type){
+  currentVaultType = type;
+  document.getElementById('vaultTitle').textContent = '';
+  document.getElementById('vault').classList.add('show');
+  await renderGrid();
+}
+document.getElementById('lockBtn').addEventListener('click', ()=>{
+  document.getElementById('vault').classList.remove('show');
+  document.getElementById('grid').classList.remove('editing');
+  currentVaultType = null;
+});
+
+async function renderGrid(){
+  const grid = document.getElementById('grid');
+  const empty = document.getElementById('empty');
+  grid.innerHTML = '';
+  const videos = await getVideos(currentVaultType);
+  if(videos.length===0){
+    empty.style.display='flex';
+    empty.textContent = '動画がありません。右上の「＋」で追加できます。';
+  } else {
+    empty.style.display='none';
+  }
+  videos.forEach(v=>{
+    const blob = v.buffer ? new Blob([v.buffer], {type: v.type || 'video/mp4'}) : v.blob;
+    const url = URL.createObjectURL(blob);
+    const div = document.createElement('div');
+    div.className='thumb';
+    div.innerHTML = `<video src="${url}#t=0.5" muted playsinline preload="metadata"></video><div class="fname">${v.name||''}</div><button class="del">🗑</button>`;
+    div.addEventListener('click', ()=>{
+      if(document.getElementById('grid').classList.contains('editing')) return;
+      const p = document.getElementById('player');
+      const pv = document.getElementById('playerVideo');
+      pv.src = url;
+      p.classList.add('show');
+      pv.play();
+    });
+    div.querySelector('.del').addEventListener('click', async (e)=>{
+      e.stopPropagation();
+      await deleteVideo(v.id);
+      renderGrid();
+    });
+    grid.appendChild(div);
+  });
+}
+
+document.getElementById('editBtn').addEventListener('click', ()=>{
+  document.getElementById('grid').classList.toggle('editing');
+});
+
+document.getElementById('addBtn').addEventListener('click', ()=>{
+  document.getElementById('fileInput').click();
+});
+document.getElementById('fileInput').addEventListener('change', async (e)=>{
+  const files = Array.from(e.target.files);
+  document.getElementById('empty').style.display='flex';
+  document.getElementById('empty').textContent = `追加中... (0/${files.length})`;
+  let done = 0;
+  let errors = [];
+  for(const f of files){
+    try{
+      await addVideo(f, f.name, currentVaultType);
+    }catch(err){
+      errors.push(f.name + ': ' + (err && err.message ? err.message : err));
+    }
+    done++;
+    document.getElementById('empty').textContent = `追加中... (${done}/${files.length})`;
+  }
+  e.target.value='';
+  await renderGrid();
+  if(errors.length){
+    alert('一部の動画を保存できませんでした:\n' + errors.join('\n'));
+  }
+});
+
+document.getElementById('closePlayer').addEventListener('click', ()=>{
+  const pv = document.getElementById('playerVideo');
+  pv.pause(); pv.src='';
+  document.getElementById('player').classList.remove('show');
+});
+
+/* ---------------- init ---------------- */
+async function init(){
+  const real = await kvGet('realCode');
+  if(!real){
+    // first launch: prompt setup
+    setTimeout(openSettings, 300);
+  }
+  render();
+}
+</script>
+</body>
+</html>
