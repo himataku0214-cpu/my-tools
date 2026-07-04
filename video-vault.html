@@ -170,6 +170,9 @@ window.onerror = function(msg, url, line, col, err){
   alert('エラーが発生しました:\n' + msg + '\n(行:' + line + ')');
   return false;
 };
+window.addEventListener('unhandledrejection', function(e){
+  alert('エラーが発生しました:\n' + (e.reason && e.reason.message ? e.reason.message : e.reason));
+});
 </script>
 <script>
 /* ---------------- IndexedDB ---------------- */
@@ -208,19 +211,17 @@ function addVideo(file,name,vaultType){
   });
 }
 function getVideos(vaultType){
-  return new Promise(res=>{
-    const items=[];
-    const cursorReq = db.transaction('videos','readonly').objectStore('videos').openCursor();
-    cursorReq.onsuccess = e => {
-      const cur = e.target.result;
-      if(cur){
-        if(cur.value.vaultType===vaultType) items.push({id:cur.key,...cur.value});
-        cur.continue();
-      } else {
-        items.sort((a,b)=>b.date-a.date);
+  return new Promise((res,rej)=>{
+    try{
+      const req = db.transaction('videos','readonly').objectStore('videos').getAll();
+      req.onsuccess = () => {
+        const items = req.result
+          .filter(v=>v.vaultType===vaultType)
+          .sort((a,b)=>b.date-a.date);
         res(items);
-      }
-    };
+      };
+      req.onerror = (e)=>rej(e.target.error);
+    }catch(err){ rej(err); }
   });
 }
 function deleteVideo(id){
